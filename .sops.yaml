@@ -1,0 +1,6 @@
+# sops encrypts the server .env so that a second admin can rebuild everything.
+# Replace the recipient with the public key from `age-keygen` (docs/runbook.md).
+# Keep the private key offline: password manager plus a printed copy.
+creation_rules:
+  - path_regex: secrets/.*\.sops\.env$
+    age: age1REPLACE_WITH_YOUR_AGE_PUBLIC_KEY

@@ -1,0 +1,57 @@
+name: Deploy
+
+# Copies infra/ to the server and runs deploy.sh there.
+# Off until the repo variable DEPLOY_ENABLED is "true" (set it once the VM exists).
+
+on:
+  push:
+    branches: [main]
+    paths: ['infra/**', '.github/workflows/deploy.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      # Check the new files against the server's real .env in a side folder,
+      # so a bad change never touches the live folder.
+      - name: Validate on the server before changing anything
+        run: |
+          rsync -az --delete --exclude .env --exclude immich/immich-config.yaml \
+            infra/ "$TARGET:/opt/memories/infra.next/"
+          ssh "$TARGET" bash -s <<'EOF'
+          set -euo pipefail
+          next=/opt/memories/infra.next
+          trap 'rm -f "$next/.env" "$next/immich/immich-config.yaml"' EXIT
+          cp /opt/memories/infra/.env "$next/.env"
+          "$next/deploy.sh" --check
+          EOF
+
+      - name: Sync and deploy
+        run: |
+          rsync -az --delete --exclude .env --exclude immich/immich-config.yaml \
+            infra/ "$TARGET:/opt/memories/infra/"
+          ssh "$TARGET" /opt/memories/infra/deploy.sh

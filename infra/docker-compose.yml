@@ -1,0 +1,121 @@
+# Memories stack: Caddy in front, Immich behind it.
+#
+# Based on Immich's own docker-compose.yml for the pinned release.
+# When Renovate bumps Immich, compare this file with the upstream one:
+#   https://github.com/immich-app/immich/blob/<version>/docker/docker-compose.yml
+# Immich server and ML must always run the same version.
+#
+# Later phases add `companion` and `web` services here.
+
+name: memories
+
+services:
+  caddy:
+    container_name: memories_caddy
+    image: docker.io/library/caddy:2.11.7-alpine
+    restart: always
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      PHOTOS_HOST: ${PHOTOS_HOST:?set PHOTOS_HOST in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    # Mount folders, not single files: deploys replace files atomically, and a
+    # single-file bind mount would keep pointing at the old copy.
+    volumes:
+      - ./caddy:/etc/caddy:ro
+      - ./placeholder:/srv/placeholder:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - edge
+    depends_on:
+      - immich-server
+
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:v3.3.5
+    restart: always
+    volumes:
+      - ${UPLOAD_LOCATION:?set UPLOAD_LOCATION in .env}:/data
+      - ./immich:/config:ro
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    environment:
+      IMMICH_CONFIG_FILE: /config/immich-config.yaml
+      IMMICH_TRUSTED_PROXIES: ${EDGE_SUBNET:-172.30.0.0/24}
+    # No published port: only Caddy can reach Immich.
+    networks:
+      - edge
+      - backend
+    depends_on:
+      - redis
+      - database
+    healthcheck:
+      disable: false
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    # Plain CPU image. Oracle Ampere VMs have no GPU or NPU for armnn/rknn.
+    image: ghcr.io/immich-app/immich-machine-learning:v3.3.5
+    restart: always
+    volumes:
+      - model-cache:/cache
+    env_file:
+      - .env
+    environment:
+      # 2 OCPUs: one worker, and unload models when idle to free RAM.
+      MACHINE_LEARNING_WORKERS: '1'
+      MACHINE_LEARNING_REQUEST_THREADS: '2'
+      MACHINE_LEARNING_MODEL_TTL: '600'
+    networks:
+      - backend
+    healthcheck:
+      disable: false
+
+  redis:
+    container_name: immich_redis
+    # Pinned to the digest in Immich's compose file. Change only with Immich.
+    image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    restart: always
+    networks:
+      - backend
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+
+  database:
+    container_name: immich_postgres
+    # Pinned to the digest in Immich's compose file. Change only with Immich.
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - ${DB_DATA_LOCATION:?set DB_DATA_LOCATION in .env}:/var/lib/postgresql/data
+    shm_size: 128mb
+    networks:
+      - backend
+    healthcheck:
+      disable: false
+
+networks:
+  # Caddy and the services it proxies. Fixed subnet so Immich can trust Caddy's
+  # X-Forwarded-For header (IMMICH_TRUSTED_PROXIES).
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.30.0.0/24}
+  # Database, cache and ML. No route to the internet is needed at runtime
+  # except for the ML model download on first start, so this is not `internal`.
+  backend: {}
+
+volumes:
+  model-cache:
+  caddy-data:
+  caddy-config:

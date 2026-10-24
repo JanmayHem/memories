@@ -1,0 +1,23 @@
+# Secrets and rendered config live only on the server.
+.env
+*.env
+!.env.example
+# sops-encrypted copies are safe to commit.
+!secrets/*.sops.env
+infra/immich/immich-config.yaml
+
+# Local data and overrides from `docker compose up` on a laptop.
+infra/data/
+infra/docker-compose.override.yml
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Node (companion and web, later phases)
+node_modules/
+dist/
+build/
+.svelte-kit/

@@ -1,0 +1,30 @@
+# Who can sign in, and who sees which album.
+#
+# This file is the source of truth for access. Change it with a pull request.
+# The companion (Phase 4) syncs it into Immich accounts and album memberships.
+# Until then, the admin applies it by hand in the Immich admin UI.
+#
+# Replace the example.com addresses with real Google account emails.
+
+people:
+  - name: Janmay
+    email: janmay@example.com
+    role: admin            # admin | member
+    face_opt_in: false     # set true only after they agree to docs/privacy.md (Phase 5)
+  - name: Rhea
+    email: rhea@example.com
+    role: member
+    face_opt_in: false
+
+groups:
+  family: [janmay@example.com]
+
+# Example album entry:
+#
+#   goa-2026:
+#     owner: janmay@example.com
+#     contributors: [rhea@example.com]
+#     viewers: ["*family"]        # "*name" expands a group
+#     share_by_face: false        # default; owner must opt in per album
+#     private: false              # true excludes the album from all face features
+albums: {}
