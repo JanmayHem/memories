@@ -1,0 +1,108 @@
+#cloud-config
+# VM bootstrap for the Memories server.
+#
+# Target: Oracle Cloud Ampere A1 (2 OCPU, 12 GB), Canonical Ubuntu 24.04 (aarch64).
+# Paste into "Show advanced options > Management > cloud-init script" when you
+# create the instance. Replace the SSH key below first.
+#
+# Result: user `memories` with key-only SSH, Docker + Compose, ports 22/80/443
+# open in the host firewall, unattended security updates, Docker log rotation.
+# The data volume is mounted later with infra/scripts/mount-data-volume.sh.
+
+users:
+  - default
+  - name: memories
+    gecos: Memories admin
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY janmay
+      # Second admin's key goes here too.
+
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - gettext-base        # envsubst, used by deploy.sh
+  - rsync               # deploy target
+  - unattended-upgrades
+  - iptables-persistent
+  - restic              # backups (Phase 3)
+  - jq
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/90-memories.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      AllowUsers memories ubuntu
+
+  - path: /etc/apt/apt.conf.d/52memories-unattended
+    permissions: "0644"
+    content: |
+      // Security updates only (the Ubuntu default origins), reboot if needed.
+      // 04:30 is after the 03:00 backup. Containers restart on their own.
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  # Without rotation, container logs slowly fill the 50 GB boot volume.
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "3" }
+      }
+
+runcmd:
+  # Docker from Docker's own apt repository (Ubuntu's docker.io lags behind).
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >-
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - usermod -aG docker memories
+  - systemctl enable --now docker
+
+  # Oracle's Ubuntu images ship iptables rules that reject everything except
+  # SSH. Open 80/443 just before the REJECT rule, then persist. (Docker adds
+  # its own FORWARD rules for published ports when it starts.) The OCI
+  # security list must also allow 80/443, see docs/runbook.md.
+  - |
+    n=$(iptables -L INPUT --line-numbers | awk '$2 == "REJECT" {print $1; exit}')
+    for rule in "-p tcp --dport 80" "-p tcp --dport 443" "-p udp --dport 443"; do
+      if [ -n "$n" ]; then
+        iptables -I INPUT "$n" -m state --state NEW $rule -j ACCEPT
+      else
+        iptables -A INPUT -m state --state NEW $rule -j ACCEPT
+      fi
+    done
+    netfilter-persistent save
+
+  # Where the repo's infra/ folder is deployed, and the photo volume mount point.
+  - install -d -o memories -g memories -m 0750 /opt/memories
+  - install -d -m 0755 /srv/photos
+
+  - systemctl restart ssh
+  - systemctl enable --now unattended-upgrades
+
+final_message: "Memories VM ready after $UPTIME seconds. Next: mount the data volume (docs/runbook.md)."

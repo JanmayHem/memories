@@ -1,0 +1,37 @@
+{
+	email {$ACME_EMAIL}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Root domain: placeholder page until the custom web UI ships (Phase 6).
+{$DOMAIN} {
+	import security_headers
+	header X-Frame-Options "DENY"
+	root * /srv/placeholder
+	templates
+	file_server
+}
+
+# Immich: web UI, API and mobile app endpoint.
+# Immich must be served at the root of a (sub)domain, never on a sub-path.
+{$PHOTOS_HOST} {
+	import security_headers
+	encode zstd gzip
+
+	# Caddy has no request body limit by default, so large video uploads work.
+	# Long timeouts so slow mobile uploads are not cut off.
+	reverse_proxy immich-server:2283 {
+		transport http {
+			read_timeout 600s
+			write_timeout 600s
+		}
+	}
+}

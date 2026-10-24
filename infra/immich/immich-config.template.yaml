@@ -1,0 +1,76 @@
+# Immich system config, kept as code.
+#
+# deploy.sh renders this file to immich-config.yaml with values from .env
+# (only the variables listed in deploy.sh are substituted). Because Immich loads
+# a config file, the admin UI can no longer change these settings: change them
+# here with a pull request. Keys left out keep Immich's defaults.
+# Reference: https://docs.immich.app/install/config-file
+
+server:
+  externalDomain: "https://${PHOTOS_HOST}"
+  loginPageMessage: "Sign in with the Google account that the admin invited."
+  # Hide the list of other users from members.
+  publicUsers: false
+
+# Layer 1 of access control: only invited emails can sign in.
+oauth:
+  enabled: true
+  issuerUrl: "https://accounts.google.com/.well-known/openid-configuration"
+  clientId: "${OAUTH_CLIENT_ID}"
+  clientSecret: "${OAUTH_CLIENT_SECRET}"
+  scope: "openid email profile"
+  buttonText: "Sign in with Google"
+  # Never create an account for an unknown Google login. The admin (later the
+  # companion) creates each account from people.yaml first; Immich then links
+  # the Google login to it by email on first sign-in.
+  autoRegister: false
+  # Skip the login page. Break-glass login: /auth/login?autoLaunch=0
+  autoLaunch: true
+  prompt: "select_account"
+  # Google does not accept the app.immich:/// custom scheme as a redirect URI
+  # for a Web client. Immich's own route forwards to it for the mobile app.
+  mobileOverrideEnabled: true
+  mobileRedirectUri: "https://${PHOTOS_HOST}/api/oauth/mobile-redirect"
+
+# Off for everyone. Turn on only for break-glass, see docs/runbook.md.
+passwordLogin:
+  enabled: ${PASSWORD_LOGIN_ENABLED}
+
+# Renovate tells us about new versions; no need for the in-app banner.
+newVersionCheck:
+  enabled: false
+
+# Immich's own nightly DB dump into UPLOAD_LOCATION/backups.
+# Runs at 02:00 so the 03:00 restic backup (Phase 3) picks it up.
+backup:
+  database:
+    enabled: true
+    cronExpression: "0 02 * * *"
+    keepLastAmount: 14
+
+# Tuned for 2 ARM cores: slower indexing, but the site stays responsive.
+job:
+  thumbnailGeneration:
+    concurrency: 2
+  metadataExtraction:
+    concurrency: 2
+  faceDetection:
+    concurrency: 1
+  smartSearch:
+    concurrency: 1
+  videoConversion:
+    concurrency: 1
+  ocr:
+    concurrency: 1
+
+machineLearning:
+  enabled: true
+  urls: ["http://immich-machine-learning:3003"]
+  facialRecognition:
+    enabled: true
+  clip:
+    enabled: true
+
+trash:
+  enabled: true
+  days: 30

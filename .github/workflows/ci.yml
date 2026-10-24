@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: shellcheck
+        run: shellcheck infra/deploy.sh infra/scripts/*.sh
+
+      - name: yamllint
+        run: yamllint --strict .
+
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
+  stack:
+    name: compose, Caddy and Immich config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fill .env with dummy values
+        working-directory: infra
+        run: |
+          sed -e 's/^OAUTH_CLIENT_ID=$/OAUTH_CLIENT_ID=ci-client-id/' \
+              -e 's/^OAUTH_CLIENT_SECRET=$/OAUTH_CLIENT_SECRET=ci-client-secret/' \
+              -e 's/^DB_PASSWORD=$/DB_PASSWORD=ci0password0only/' \
+              .env.example > .env
+
+      - name: deploy.sh --check (renders config, validates compose and Caddyfile)
+        run: ./infra/deploy.sh --check
+
+      - name: Rendered Immich config is valid and complete
+        working-directory: infra/immich
+        run: |
+          yq eval '.' immich-config.yaml > /dev/null
+          if grep -n '[$][{]' immich-config.yaml; then
+            echo "::error::unrendered variable in immich-config.yaml"; exit 1
+          fi
+          test "$(yq '.oauth.autoRegister' immich-config.yaml)" = "false"
+          test "$(yq '.passwordLogin.enabled' immich-config.yaml)" = "false"
+
+      - name: Immich server and ML versions match
+        working-directory: infra
+        run: |
+          server=$(yq '.services.immich-server.image' docker-compose.yml | cut -d: -f2)
+          ml=$(yq '.services.immich-machine-learning.image' docker-compose.yml | cut -d: -f2)
+          echo "server=$server ml=$ml"
+          test "$server" = "$ml"

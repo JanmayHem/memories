@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":disableDependencyDashboard"],
+  "timezone": "Asia/Kolkata",
+  "labels": ["dependencies"],
+  "docker-compose": {
+    "managerFilePatterns": ["/(^|/)infra/docker-compose\\.yml$/"]
+  },
+  "packageRules": [
+    {
+      "description": "Immich server and ML always move together, one PR per release. Never automerge: read the release notes for breaking changes, and compare infra/docker-compose.yml with upstream docker/docker-compose.yml.",
+      "matchPackageNames": [
+        "ghcr.io/immich-app/immich-server",
+        "ghcr.io/immich-app/immich-machine-learning"
+      ],
+      "groupName": "Immich",
+      "automerge": false,
+      "prBodyNotes": [
+        "Checklist before merge:\n- [ ] Read https://github.com/immich-app/immich/releases/tag/{{{newVersion}}} for breaking changes\n- [ ] Diff our compose file against https://github.com/immich-app/immich/blob/{{{newVersion}}}/docker/docker-compose.yml (Postgres and Valkey digests too)\n- [ ] Snapshot the DB first (Administration > Job Queues > Create Database Dump)"
+      ]
+    },
+    {
+      "description": "Postgres and Valkey are pinned by Immich's own compose file. Update them only by hand, together with an Immich upgrade.",
+      "matchPackageNames": ["ghcr.io/immich-app/postgres", "docker.io/valkey/valkey"],
+      "enabled": false
+    },
+    {
+      "description": "Caddy and GitHub Actions: low risk, group minor and patch updates.",
+      "matchPackageNames": ["docker.io/library/caddy"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Caddy"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "GitHub Actions"
+    }
+  ]
+}
